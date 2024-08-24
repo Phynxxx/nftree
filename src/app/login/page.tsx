@@ -1,6 +1,7 @@
 import { Button } from "~/components/ui/button";
 import Image from 'next/image';
 import LoginButton from "~/components/login-button";
+import Link from "next/link";
 export default function page() {
   return (
     <div className="overflow-y-hidden h-[calc(92vh)]">
