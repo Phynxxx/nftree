@@ -32,9 +32,13 @@ import Camera from "~/components/ui/camera/camera";
 import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "~/components/ui/dialog";
 import { UploadIcon, CameraIcon } from "lucide-react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { createTree, getUserById, uploadImage } from "~/client/api";
+import { createTree, getLastTreeId, getUserById, getUserByWalletAddress, uploadImage } from "~/client/api";
 import { useRouter } from "next/navigation";
 import { log } from "console";
+import { useActiveAccount, useActiveWallet } from "thirdweb/react";
+import { sendAndConfirmTransaction } from "thirdweb";
+import { safeMint } from "~/lib/thirdweb/rpc/43113/0xdcee2dd10dd46086cc1d2b0825a11ffc990e6eff";
+import { nftreeContract } from "~/lib/thirdweb/web3";
 
 function Page() {
     const form = useForm<z.infer<typeof formSchema>>({
@@ -42,6 +46,8 @@ function Page() {
     });
 
     const router = useRouter()
+
+    const activeAccount = useActiveAccount()
 
     const [isCaptureEnabled, setCaptureEnabled] = useState<boolean>(false);
     const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
@@ -89,12 +95,43 @@ function Page() {
 
     const treeMutation = useMutation({
         mutationFn: async ({ name, location, user_id, type, content, image }: { name: string, location: string, user_id: number, type: string, content: string, image: Blob }) => {
+            if (!activeAccount) throw new Error("No active account")
+
+            const lastTreeId = await getLastTreeId();
+
+            const reciept = await sendAndConfirmTransaction({
+                transaction: safeMint({
+                    to: activeAccount.address,
+                    uri: `${process.env.NEXT_PUBLIC_BASE_URL}/trees/${lastTreeId + 1}`,
+                    contract: nftreeContract,
+                }),
+                account: activeAccount!,
+            });
+
             const imageUrlObj = await uploadImage(image)
-            await createTree(name, location, user_id, type, content, imageUrlObj.filename)
+            const res = await createTree(lastTreeId + 1, name, location, user_id, type, content, imageUrlObj.filename)
+
+            if (!res.tree_id) throw new Error("No tree created in db")
         }
     })
 
+    const useUserByWallet = (wallet: string) => useQuery({
+        queryKey: ["wallet", wallet],
+        queryFn: async () => {
+            if (!activeAccount) router.push("/login")
+            return await getUserByWalletAddress(wallet)
+        }
+    })
+
+
+    const { data: user } = useUserByWallet(activeAccount ? activeAccount.address : "")
+
     const onSubmit = async (data: z.infer<typeof formSchema>) => {
+        if (!user || !activeAccount) {
+            router.push("/login")
+            return;
+        }
+
         if (capturedImage) {
             const imageBlob = await (await fetch(capturedImage)).blob();
 
@@ -104,7 +141,7 @@ function Page() {
                 name: data.name,
                 location: `${data.latitude}:${data.longitude}`,
                 type: data.type,
-                user_id: 1,
+                user_id: user.id,
                 content: data.description,
                 image: imageBlob
             }, {
